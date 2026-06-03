@@ -1,0 +1,15 @@
+# Python Environment
+venv/
+__pycache__/
+*.pyc
+
+# IDE & OS Files
+.DS_Store
+.idea/
+.vscode/
+
+# Security & Biometrics (NEVER UPLOAD THESE)
+vision_daemon/core/*.json
+*.sock
+*.tflite
+*.onnx

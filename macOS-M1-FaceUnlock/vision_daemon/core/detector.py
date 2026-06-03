@@ -1,0 +1,71 @@
+import cv2
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+import urllib.request
+import os
+
+class FaceDetector:
+    def __init__(self, detection_confidence=0.7):
+        """
+        Initialize the modern Mediapipe Tasks Vision API.
+        Automatically provisions the required TFLite model if missing.
+        """
+        self.model_path = os.path.join(os.path.dirname(__file__), "blaze_face_short_range.tflite")
+        self._download_model_if_needed()
+        
+        # Configure the Base Options for the ML Engine
+        base_options = python.BaseOptions(model_asset_path=self.model_path)
+        options = vision.FaceDetectorOptions(
+            base_options=base_options, 
+            min_detection_confidence=detection_confidence
+        )
+        self.detector = vision.FaceDetector.create_from_options(options)
+
+    def _download_model_if_needed(self):
+        """Fetches the bare-metal optimized TFLite model from Google."""
+        if not os.path.exists(self.model_path):
+            print("[SYSTEM] Provisioning Mediapipe TFLite Model...")
+            url = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
+            urllib.request.urlretrieve(url, self.model_path)
+            print("[SYSTEM] Model provisioned successfully.")
+
+    def get_face_crop(self, frame, padding_ratio=0.3):
+        """
+        Takes a BGR OpenCV frame, runs Tasks API, returns the PADDED cropped face.
+        padding_ratio=0.3 means expanding the box by 30% in all directions.
+        """
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        
+        detection_result = self.detector.detect(mp_image)
+        
+        if not detection_result.detections:
+            return None, None 
+
+        detection = detection_result.detections[0]
+        bbox = detection.bounding_box
+        
+        # Original coordinates
+        orig_x, orig_y, orig_w, orig_h = int(bbox.origin_x), int(bbox.origin_y), int(bbox.width), int(bbox.height)
+        
+        # Calculate padding in pixels
+        pad_x = int(orig_w * padding_ratio)
+        pad_y = int(orig_h * padding_ratio)
+        
+        # Calculate new padded coordinates
+        x = orig_x - pad_x
+        y = orig_y - int(pad_y * 1.5) # Extra padding on top to include the full head/hair
+        w = orig_w + (2 * pad_x)
+        h = orig_h + (2 * pad_y)
+        
+        # OS-level Safety: Bounds checking (Clamping to array limits)
+        ih, iw, _ = frame.shape
+        x, y = max(0, x), max(0, y)
+        w = min(w, iw - x)
+        h = min(h, ih - y)
+        
+        # Array slicing the frame safely
+        face_crop = frame[y:y+h, x:x+w]
+        
+        return face_crop, (x, y, w, h)
