@@ -4,12 +4,17 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import urllib.request
 import os
+import numpy as np
+from typing import Tuple, Optional, Any
 
 class FaceDetector:
-    def __init__(self, detection_confidence=0.7):
+    def __init__(self, detection_confidence: float = 0.7) -> None:
         """
         Initialize the modern Mediapipe Tasks Vision API.
         Automatically provisions the required TFLite model if missing.
+        
+        Args:
+            detection_confidence (float): Minimum confidence threshold for face detection.
         """
         self.model_path = os.path.join(os.path.dirname(__file__), "blaze_face_short_range.tflite")
         self._download_model_if_needed()
@@ -22,18 +27,26 @@ class FaceDetector:
         )
         self.detector = vision.FaceDetector.create_from_options(options)
 
-    def _download_model_if_needed(self):
-        """Fetches the bare-metal optimized TFLite model from Google."""
+    def _download_model_if_needed(self) -> None:
+        """Fetches the bare-metal optimized TFLite model from Google if not locally cached."""
         if not os.path.exists(self.model_path):
             print("[SYSTEM] Provisioning Mediapipe TFLite Model...")
             url = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
             urllib.request.urlretrieve(url, self.model_path)
             print("[SYSTEM] Model provisioned successfully.")
 
-    def get_face_crop(self, frame, padding_ratio=0.3):
+    def get_face_crop(self, frame: np.ndarray, padding_ratio: float = 0.3) -> Tuple[Optional[np.ndarray], Optional[Tuple[int, int, int, int]]]:
         """
         Takes a BGR OpenCV frame, runs Tasks API, returns the PADDED cropped face.
         padding_ratio=0.3 means expanding the box by 30% in all directions.
+        
+        Args:
+            frame (np.ndarray): Input image frame in BGR format.
+            padding_ratio (float): Ratio to expand the bounding box by.
+            
+        Returns:
+            Tuple[Optional[np.ndarray], Optional[Tuple[int, int, int, int]]]: 
+                Cropped face image array and coordinates (x, y, w, h), or (None, None) if not detected.
         """
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)

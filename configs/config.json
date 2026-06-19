@@ -1,0 +1,9 @@
+{
+    "distance_threshold": 0.45,
+    "challenge_yaw_threshold": 12.0,
+    "timeout_seconds": 5,
+    "socket_path": "~/.faceunlock_run/faceunlock.sock",
+    "headless": true,
+    "camera_id": 0,
+    "liveness_buffer_size": 5
+}

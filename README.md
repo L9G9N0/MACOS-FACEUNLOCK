@@ -1,87 +1,113 @@
-macOS FaceUnlock (Apple Silicon)
-An offline Face Authentication system designed for macOS. Since Apple computers currently lack Infrared (IR) hardware for secure Face ID, this project implements a software-based solution using the standard RGB webcam. It relies on an Active Liveness state machine to prevent spoofing, Euclidean distance matching for identity verification, and a custom Pluggable Authentication Module (PAM) written in C++ to interface with the macOS kernel.
+# macOS FaceUnlock (Apple Silicon)
 
-Motivation
-Standard 2D facial recognition through an RGB camera is highly vulnerable to spoofing attacks (e.g., using photos or video playback on an iPad). The objective of this project was to build an authentication daemon that operates securely without external hardware or cloud APIs, while maintaining performance on Apple Silicon.
+An enterprise-grade, offline face authentication platform designed for macOS. Since Apple hardware lacks dedicated infrared (IR) depth cameras for Face ID on laptops, this project implements a secure software-based biometric unlock solution using the standard FaceTime RGB webcam. 
 
-Development Process & Architectural Decisions
-Building this system required navigating specific hardware limitations and computer vision constraints. Here is the progression of the architecture:
+To prevent presentation attacks (spoofing via printed photos or iPads), the platform utilizes an **Active Liveness 3D State Machine** powered by MediaPipe and custom OpenCV geometry. It communicates with the macOS Pluggable Authentication Module (PAM) kernel boundary using a **hardened UNIX Domain Socket IPC layer** with macOS Peer Credential checks (`LOCAL_PEERCRED`).
 
-1. Monocular Depth Estimation (Failed Attempt)
-Approach: Used the MiDaS depth-estimation model to calculate the 3D topology of the face using Standard Deviation and Gradient metrics.
+---
 
-Why it failed: High-resolution digital screens display well-lit photos with "baked-in" shadows. The depth model interpreted these 2D shadows as actual 3D structures, leading to false positives during iPad spoofing attacks.
+## System Architecture
 
-2. Passive Face Anti-Spoofing CNNs (Failed Attempt)
-Approach: Transitioned to a Face Anti-Spoofing (FAS) CNN trained to detect Moiré patterns and unnatural screen glare.
+The repository is modularized into isolated layers to reduce coupling, enforce privilege boundaries, and prevent local security escalations:
 
-Why it failed: The Image Signal Processor (ISP) on Apple's M1 chip aggressively smooths and denoises the raw webcam feed at the hardware level. This hardware-level filtering destroyed the microscopic Moiré patterns, causing severe domain shift and rendering the CNN ineffective.
+```mermaid
+graph TD
+    A[macOS Login Prompt / sudo] -->|Loads sufficient PAM| B(pam_faceunlock.so)
+    B -->|Binds socket & checks owner| C[~/.faceunlock_run/faceunlock.sock]
+    D[vision_daemon] -->|Webcam Frame Loop| E{Liveness FSM}
+    E -->|Valid Head Yaw Rotation| F{Face Recognition}
+    F -->|Identity Match| G[IPC Client]
+    G -->|Transmits AUTH_SUCCESS| C
+    C -->|getsockopt LOCAL_PEERCRED| B
+    B -->|Verified User Match| A
+```
 
-3. Active Challenge-Response Liveness (Final Implementation)
-Approach: Moved to Deterministic 3D Geometry. Using the MediaPipe Tasks API, the daemon extracts the 4x4 Facial Transformation Matrix to calculate real-time Head Yaw (horizontal rotation).
+### Core Components
 
-Mechanism: The authentication state machine remains locked until the user physically executes a randomized head-turn challenge. A static photo or a flat digital screen cannot generate a dynamic 3D rotational matrix on demand, making it practically impossible to spoof without real-time 3D rendering.
+1. **`pam/`**: Pluggable Authentication Module written in C++. Integrates directly into macOS authentication subsystem (`/etc/pam.d/sudo`, `/etc/pam.d/screensaver`). Implements 5-second `select()` socket timeouts to guarantee fallback to Password/Touch ID in case of failure.
+2. **`vision_daemon/`**: Lightweight background process analyzing the camera feed.
+   - `core/detector.py`: BlazeFace Face Detection TFLite runner.
+   - `core/antispoof.py`: Active liveness challenge-response FSM.
+   - `core/recognizer.py`: Multi-identity dlib vector matching with disk I/O caching.
+   - `core/encoder.py`: Dynamic enrollment CLI tool for registration.
+3. **`ipc/`**: Client interface transmitting authorization signals securely to the socket listener.
+4. **`configs/`**: JSON configuration validation module for custom distances, camera index, and yaw thresholds.
+5. **`scripts/`**: Setup, bootstrap, installation plists, and environment validation scripts.
+6. **`tests/`**: Offline automated unit and integration tests.
 
+---
 
-System Architecture
-The project is structured across three core layers:
+## Hardened Security Posture
 
-Layer 1: Vision Daemon (Python)State Machine: To prevent the lockscreen from triggering on a glitchy frame, a 5-Frame Queue Buffer (collections.deque) tracks the liveness state. The system authenticates only if the buffer reaches a 5/5 confidence state, processed in $O(1)$ time.Identity Verification: Extracts a 128-Dimension facial vector using dlib.RAM Caching: To prevent Disk I/O latency and battery drain, the master face profile is read from disk only once during initialization and cached into RAM. Real-time Euclidean distance calculations happen entirely in memory.
+Designed to undergo strict security reviews, this platform implements defense-in-depth security mitigations:
 
-Layer 2: Inter-Process Communication (IPC)
-UNIX Domain Sockets: The Python user-space daemon communicates with the macOS kernel module via UNIX sockets (.sock), bypassing the TCP/IP stack for microsecond latency.
+| Attack Vector | Vulnerability | Engineering Mitigation |
+| :--- | :--- | :--- |
+| **Local Spoofing** | A malicious unprivileged process writes to root's authentication socket. | **macOS Peer Credentials Verification**: The C++ PAM module performs `getsockopt(client_fd, 0, LOCAL_PEERCRED, ...)` to guarantee that the connecting client process UID matches the target logging user's UID. Untrusted connections are dropped immediately. |
+| **Presentation Attack** | 2D photographs or video playback on high-res displays bypass face checks. | **Active Liveness Challenge-Response**: Uses a 3D transformation matrix to calculate head yaw. The user must rotate their head in a randomized direction (LEFT or RIGHT) and return to center within 5 seconds. |
+| **Privilege Escalation** | Rogue client writes arbitrary username payload to socket. | **Dynamic Socket Ownership**: Socket resides in user's home directory (`~/.faceunlock_run`), gets dynamically `chown`ed to the logging-in user, and restricted via discretionary access control to `0600` permissions. |
+| **System Lockout** | Vision daemon crashes or camera is busy, hanging authentication. | **Select Timeout Fallbacks**: The C++ PAM module utilizes non-blocking `select()` calls capped at 5 seconds. If no successful biometric signal is received, the module returns `PAM_IGNORE`, cleanly falling back to Apple's password prompt. |
 
-Layer 3: Pluggable Authentication Module (C++)
-Kernel Integration: A custom C++ PAM library (pam_faceunlock.so) is injected into /etc/pam.d/sudo and /etc/pam.d/screensaver.
+---
 
-Fallback Mechanism: Configured with the sufficient PAM flag and a 5-second select() timeout. If the face is not recognized or the daemon is inactive, the system gracefully falls back to the default Apple Touch ID/Password prompt.
+## Installation & Deployment
 
-Security Constraints
-The UNIX socket is fortified against local malicious processes using Defense in Depth:
+### 1. Developer Bootstrap
+Clone the repository and run the developer bootstrap script to provision a local virtual environment, download the required landmarkers, and compile the C++ PAM module:
+```bash
+./scripts/bootstrap.sh
+```
 
-DAC File Permissions: The socket resides in a hidden directory with strict chmod 700 and chmod 600 permissions.
+### 2. Environment Verification
+Validate that your environment is fully compatible, configurations are correct, and security permissions are secure:
+```bash
+./scripts/check_env.sh
+```
 
-Kernel Process Validation: The C++ module uses macOS internal libraries (LOCAL_PEERCRED and proc_pidpath) to verify the Process ID (PID) and executable path of the client. Any connection not originating from the verified Python daemon environment is dropped.
+### 3. Enroll Your Identity
+Capture and generate your 128-D facial vector profile (run with `--auto` for headless capture, or GUI mode will open a monitor window):
+```bash
+./venv/bin/python vision_daemon/core/encoder.py --username $USER
+```
 
+### 4. Install the PAM Module & Daemon Service
+Run the installer script with root permissions to install the compiled library to the macOS PAM directory and register the LaunchAgent daemon service:
+```bash
+sudo ./scripts/install.sh
+```
 
-Installation & Setup
-1. Clone the repository
+Follow the post-install instructions to enable the background service:
+```bash
+launchctl load -w ~/Library/LaunchAgents/com.faceunlock.daemon.plist
+```
 
-Bash
-git clone https://github.com/YourUsername/macOS-M1-FaceUnlock.git
-cd macOS-M1-FaceUnlock
+To complete macOS integration, append the following line to the top of `/etc/pam.d/sudo` or `/etc/pam.d/screensaver`:
+```text
+auth       sufficient     /usr/local/lib/pam/pam_faceunlock.so
+```
 
-2. Setup the Vision Daemon
+---
 
-Bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+## Testing & Benchmarks
 
-3. Enroll Your Face
-Execute the encoder to generate your 128-D vector profile.
+### Running Automated Test Suite
+The repository includes a comprehensive, zero-dependency unit and integration test suite mocking camera and landmark hardware. It validates state machine transitions, socket communication, and profile directories in under 3 seconds:
+```bash
+./venv/bin/python -m unittest discover -s tests -p "test_*.py"
+```
 
-Bash
-python vision_daemon/core/encoder.py
+### Running Performance Benchmarks
+To measure serialization speed and pose-geometry computation latency:
+```bash
+./venv/bin/python benchmarks/run_benchmarks.py
+```
+*Results will be cached in `benchmarks/benchmark_results.json`.*
 
-4. Compile the C++ PAM Module
+---
 
-Bash
-cd pam
-clang++ -dynamiclib -fPIC -o pam_faceunlock.so pam_faceunlock.cpp -lpam
-
-5. macOS System Integration
-Copy the compiled module to the local lib directory and set root permissions.
-
-Bash
-sudo mkdir -p /usr/local/lib/pam
-sudo cp pam_faceunlock.so /usr/local/lib/pam/
-sudo chown root:wheel /usr/local/lib/pam/pam_faceunlock.so
-sudo chmod 444 /usr/local/lib/pam/pam_faceunlock.so
-
-
-
-Add auth sufficient /usr/local/lib/pam/pam_faceunlock.so to the top of /etc/pam.d/sudo or /etc/pam.d/screensaver
-
-
-AND THANKS for coming here :::::)))))
+## Uninstallation
+To cleanly stop the LaunchAgent daemon and delete all binaries from system paths:
+```bash
+sudo ./scripts/uninstall.sh
+```
+*Remember to remove the PAM config line from `/etc/pam.d/sudo`.*

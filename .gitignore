@@ -2,6 +2,12 @@
 venv/
 __pycache__/
 *.pyc
+*.log
+
+# Compiled Libraries
+*.so
+*.o
+*.dylib
 
 # IDE & OS Files
 .DS_Store
@@ -10,6 +16,10 @@ __pycache__/
 
 # Security & Biometrics (NEVER UPLOAD THESE)
 vision_daemon/core/*.json
+assets/profiles/
 *.sock
 *.tflite
 *.onnx
+
+# Cache & Benchmarks
+benchmarks/benchmark_results.json
