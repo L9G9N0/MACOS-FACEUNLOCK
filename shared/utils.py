@@ -1,7 +1,29 @@
 import os
 import json
 import logging
+import hashlib
 from typing import Any, Dict
+
+def verify_file_hash(file_path: str, expected_hash: str) -> bool:
+    """Computes the SHA-256 hash of a file and verifies it matches the expected hash.
+    
+    Args:
+        file_path (str): Path to the target file.
+        expected_hash (str): The expected SHA-256 hexadecimal digest.
+        
+    Returns:
+        bool: True if the file matches the expected hash, False otherwise.
+    """
+    if not os.path.exists(file_path):
+        return False
+    sha256 = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as f:
+            while chunk := f.read(8192):
+                sha256.update(chunk)
+        return sha256.hexdigest() == expected_hash
+    except Exception:
+        return False
 
 def load_config() -> Dict[str, Any]:
     """Loads system configuration options from configs/config.json.

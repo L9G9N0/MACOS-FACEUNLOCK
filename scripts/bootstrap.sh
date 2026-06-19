@@ -35,7 +35,18 @@ fi
 # 4. Install dependencies
 echo "Installing package dependencies..."
 ./venv/bin/pip install --upgrade pip
-./venv/bin/pip install -r requirements.txt
+if ! ./venv/bin/pip install -r requirements.txt; then
+    echo "------------------------------------------------------------------------"
+    echo "[WARNING] Python package installation encountered compilation errors."
+    echo "This is typically caused by 'dlib' source compilation constraints under"
+    echo "experimental/unstable Python versions (like 3.14) on Apple Silicon."
+    echo "To resolve this:"
+    echo "  1. Install dlib via Homebrew: brew install dlib"
+    echo "  2. Or, use a stable Python version (3.11 or 3.12) to build the environment."
+    echo "The native C++ PAM module compilation will still proceed."
+    echo "------------------------------------------------------------------------"
+fi
+
 
 # 5. Initialize config directories
 echo "Creating daemon runtime directories..."

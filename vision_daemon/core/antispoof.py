@@ -6,7 +6,7 @@ import numpy as np
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from shared.utils import load_config, setup_logger
+from shared.utils import load_config, setup_logger, verify_file_hash
 from typing import Tuple, Optional
 
 logger = setup_logger("Liveness")
@@ -28,6 +28,12 @@ class FASEstimator:
         
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(f"[FATAL] Model missing at {self.model_path}. Download face_landmarker.task first.")
+
+        # Validate file integrity to prevent server model modifications or corruptions
+        expected_hash = "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff"
+        if not verify_file_hash(self.model_path, expected_hash):
+            raise ValueError(f"[FATAL] Integrity check failed for facial landmarker task file: {self.model_path}")
+
 
         base_options = python.BaseOptions(model_asset_path=self.model_path)
         options = vision.FaceLandmarkerOptions(

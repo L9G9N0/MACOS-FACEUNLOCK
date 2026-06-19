@@ -6,6 +6,7 @@ import urllib.request
 import os
 import numpy as np
 from typing import Tuple, Optional, Any
+from shared.utils import verify_file_hash
 
 class FaceDetector:
     def __init__(self, detection_confidence: float = 0.7) -> None:
@@ -28,12 +29,28 @@ class FaceDetector:
         self.detector = vision.FaceDetector.create_from_options(options)
 
     def _download_model_if_needed(self) -> None:
-        """Fetches the bare-metal optimized TFLite model from Google if not locally cached."""
+        """Fetches the bare-metal optimized TFLite model from Google if not locally cached, verifying its integrity."""
+        expected_hash = "b4578f35940bf5a1a655214a1cce5cab13eba73c1297cd78e1a04c2380b0152f"
+        
+        # If it exists but has a different hash, delete it so we re-download a clean copy
+        if os.path.exists(self.model_path) and not verify_file_hash(self.model_path, expected_hash):
+            print("[WARNING] Model hash mismatch. Deleting and re-downloading model...")
+            try:
+                os.remove(self.model_path)
+            except Exception as e:
+                print(f"[ERROR] Could not remove invalid model: {str(e)}")
+            
         if not os.path.exists(self.model_path):
             print("[SYSTEM] Provisioning Mediapipe TFLite Model...")
             url = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
             urllib.request.urlretrieve(url, self.model_path)
             print("[SYSTEM] Model provisioned successfully.")
+            
+        # Hard fail if download is corrupted or modified
+        if not verify_file_hash(self.model_path, expected_hash):
+            raise ValueError(f"Integrity check failed for TFLite model: {self.model_path}")
+
+
 
     def get_face_crop(self, frame: np.ndarray, padding_ratio: float = 0.3) -> Tuple[Optional[np.ndarray], Optional[Tuple[int, int, int, int]]]:
         """

@@ -21,9 +21,11 @@ from vision_daemon.core.antispoof import FASEstimator
 class TestFASEstimator(unittest.TestCase):
     @patch('vision_daemon.core.antispoof.vision.FaceLandmarker.create_from_options')
     @patch('vision_daemon.core.antispoof.load_config')
+    @patch('vision_daemon.core.antispoof.verify_file_hash')
     @patch('os.path.exists')
-    def setUp(self, mock_exists, mock_load_config, mock_create):
+    def setUp(self, mock_exists, mock_verify, mock_load_config, mock_create):
         mock_exists.return_value = True
+        mock_verify.return_value = True
         mock_load_config.return_value = {
             "challenge_yaw_threshold": 12.0,
             "timeout_seconds": 5,
@@ -32,6 +34,7 @@ class TestFASEstimator(unittest.TestCase):
         self.mock_landmarker = MagicMock()
         mock_create.return_value = self.mock_landmarker
         self.estimator = FASEstimator()
+
 
     def test_reset_session(self):
         """Test if session state resets correctly."""
